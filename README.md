@@ -151,7 +151,7 @@ HR 문서 Knowledge Base에서 정보 검색
 - `slack-bot-bridge-role`: SQS 읽기, AgentCore 호출 권한
 - `slack-bot-worker-role`: Bedrock, Knowledge Base 접근 권한
 
-## � 업경데이트 방법
+##  업데이트 방법
 
 ### AgentCore Worker 코드 수정 후
 ```bash
