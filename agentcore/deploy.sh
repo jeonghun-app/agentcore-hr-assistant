@@ -11,8 +11,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 # 필수 파일 확인
-if [ ! -f "agentcore_worker_http.py" ]; then
-    echo "Error: agentcore_worker_http.py not found"
+if [ ! -f "agent.py" ]; then
+    echo "Error: agent.py not found"
     exit 1
 fi
 
@@ -75,7 +75,7 @@ if [ "$CONFIGURE_NEEDED" = true ]; then
     echo ""
     echo "Configuring AgentCore..."
     agentcore configure \
-        --entrypoint agentcore_worker_http.py \
+        --entrypoint agent.py \
         --name "$AGENT_NAME" \
         --deployment-type direct_code_deploy \
         --runtime "$PYTHON_RUNTIME" \
@@ -87,12 +87,23 @@ if [ "$CONFIGURE_NEEDED" = true ]; then
     echo "✓ 설정 완료"
 fi
 
+# Model ID 입력
+echo ""
+DEFAULT_MODEL_ID="arn:aws:bedrock:us-east-1:0000000000:inference-profile/global.anthropic.claude-sonnet-4-20250514-v1:0"
+read -p "Enter Model ID or ARN [$DEFAULT_MODEL_ID]: " MODEL_ID
+MODEL_ID=${MODEL_ID:-$DEFAULT_MODEL_ID}
+
 # Knowledge Base ID 입력
 echo ""
 read -p "Enter Knowledge Base ID (optional, press Enter to skip): " KNOWLEDGE_BASE_ID
 if [ -n "$KNOWLEDGE_BASE_ID" ]; then
     read -p "Enter Knowledge Base Region [$KB_REGION]: " INPUT_KB_REGION
     KB_REGION=${INPUT_KB_REGION:-$KB_REGION}
+    
+    # Knowledge Base 권한 설정 여부 확인
+    echo ""
+    read -p "Add Knowledge Base permissions to execution role? (Y/n): " ADD_KB_PERMS
+    ADD_KB_PERMS=${ADD_KB_PERMS:-Y}
 fi
 
 echo ""
@@ -100,23 +111,104 @@ echo "=== 배포 정보 ==="
 echo "  Agent Name: $AGENT_NAME"
 echo "  Region: $AWS_REGION"
 echo "  Runtime: $PYTHON_RUNTIME"
+echo "  Model ID: $MODEL_ID"
 echo "  Knowledge Base ID: ${KNOWLEDGE_BASE_ID:-Not set}"
 echo "  KB Region: $KB_REGION"
 echo ""
 
 # 환경 변수 설정
-ENV_VARS=""
+ENV_VARS="--env MODEL_ID=$MODEL_ID"
 if [ -n "$KNOWLEDGE_BASE_ID" ]; then
-    ENV_VARS="--env KNOWLEDGE_BASE_ID=$KNOWLEDGE_BASE_ID --env KB_REGION=$KB_REGION"
+    ENV_VARS="$ENV_VARS --env KNOWLEDGE_BASE_ID=$KNOWLEDGE_BASE_ID --env KB_REGION=$KB_REGION"
+fi
+
+# Knowledge Base 권한 추가 (필요한 경우)
+if [ -n "$KNOWLEDGE_BASE_ID" ] && [[ "$ADD_KB_PERMS" =~ ^[Yy]$ ]]; then
+    echo ""
+    echo "=== Adding Knowledge Base Permissions ==="
+    
+    # .bedrock_agentcore.yaml에서 execution role 이름 추출
+    if [ -f ".bedrock_agentcore.yaml" ]; then
+        EXECUTION_ROLE=$(grep "execution_role:" .bedrock_agentcore.yaml | head -1 | awk '{print $2}')
+        if [ -n "$EXECUTION_ROLE" ]; then
+            ROLE_NAME=$(echo "$EXECUTION_ROLE" | awk -F'/' '{print $NF}')
+            POLICY_NAME="BedrockAgentCoreRuntimeExecutionPolicy-${AGENT_NAME}"
+            ACCOUNT_ID=$(echo "$EXECUTION_ROLE" | awk -F':' '{print $5}')
+            
+            echo "Role Name: $ROLE_NAME"
+            echo "Policy Name: $POLICY_NAME"
+            echo "Account ID: $ACCOUNT_ID"
+            echo ""
+            
+            # 현재 정책 가져오기
+            echo "Fetching current policy..."
+            aws iam get-role-policy \
+                --role-name "$ROLE_NAME" \
+                --policy-name "$POLICY_NAME" \
+                --region "$AWS_REGION" \
+                --query 'PolicyDocument' \
+                --output json > /tmp/current_policy.json 2>/dev/null
+            
+            if [ $? -ne 0 ]; then
+                echo "Policy not found, creating new one..."
+                echo '{"Version": "2012-10-17", "Statement": []}' > /tmp/current_policy.json
+            fi
+            
+            # Knowledge Base 권한 추가
+            echo "Adding Knowledge Base permissions..."
+            cat /tmp/current_policy.json | jq '.Statement += [
+                {
+                    "Sid": "BedrockKnowledgeBaseAccess",
+                    "Effect": "Allow",
+                    "Action": [
+                        "bedrock:Retrieve",
+                        "bedrock:RetrieveAndGenerate"
+                    ],
+                    "Resource": "arn:aws:bedrock:'$KB_REGION':'$ACCOUNT_ID':knowledge-base/*"
+                },
+                {
+                    "Sid": "BedrockAgentRuntimeAccess",
+                    "Effect": "Allow",
+                    "Action": [
+                        "bedrock-agent-runtime:Retrieve",
+                        "bedrock-agent-runtime:RetrieveAndGenerate"
+                    ],
+                    "Resource": "*"
+                }
+            ] | .Statement |= unique_by(.Sid)' > /tmp/updated_policy.json
+            
+            if [ $? -eq 0 ]; then
+                # IAM 정책 업데이트
+                echo "Updating IAM role policy..."
+                aws iam put-role-policy \
+                    --role-name "$ROLE_NAME" \
+                    --policy-name "$POLICY_NAME" \
+                    --policy-document file:///tmp/updated_policy.json \
+                    --region "$AWS_REGION"
+                
+                if [ $? -eq 0 ]; then
+                    echo "✓ Knowledge Base permissions added successfully"
+                else
+                    echo "⚠ Warning: Failed to update IAM policy. You may need to add permissions manually."
+                fi
+            else
+                echo "⚠ Warning: jq command failed. Please ensure jq is installed."
+            fi
+            
+            # 임시 파일 정리
+            rm -f /tmp/current_policy.json /tmp/updated_policy.json
+        else
+            echo "⚠ Warning: Could not extract execution role from config"
+        fi
+    else
+        echo "⚠ Warning: .bedrock_agentcore.yaml not found"
+    fi
+    echo ""
 fi
 
 # AgentCore 배포
 echo "Deploying to AgentCore..."
-if [ -n "$ENV_VARS" ]; then
-    agentcore launch --agent "$AGENT_NAME" --auto-update-on-conflict $ENV_VARS
-else
-    agentcore launch --agent "$AGENT_NAME" --auto-update-on-conflict
-fi
+agentcore launch --agent "$AGENT_NAME" --auto-update-on-conflict $ENV_VARS
 
 # 상태 확인
 echo ""
