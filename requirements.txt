@@ -1,5 +1,0 @@
-# Strands Agents
-strands-agents>=1.0.0
-
-# Slack SDK
-slack-sdk>=3.35.0

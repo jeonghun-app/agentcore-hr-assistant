@@ -1,208 +1,200 @@
-# Slack Bot with AgentCore Runtime
+# Slack Bot with AWS Bedrock AgentCore
 
-Strands Agent 기반 HR Assistant Bot - AgentCore Runtime 아키텍처
+Slack Bot과 AWS Bedrock AgentCore Runtime을 연동한 AI 어시스턴트 시스템입니다.
 
-## 🏗️ 아키텍처
+## 아키텍처
 
 ```
-Slack → API Gateway → Lambda Receiver → SQS → Lambda Bridge → AgentCore Runtime (Strands Agent)
+Slack → API Gateway → Lambda Receiver → SQS → Lambda Bridge → AgentCore Runtime
 ```
 
-### 구성 요소
+## 프로젝트 구조
 
-1. **Lambda Receiver**: Slack 이벤트를 받아 SQS로 전달
-2. **SQS Queue**: 비동기 메시지 큐 (3초 타임아웃 방어)
-3. **Lambda Bridge**: SQS에서 메시지를 읽어 AgentCore Runtime 호출
-4. **AgentCore Runtime**: Strands Agent가 실행되는 관리형 컨테이너 환경
+```
+.
+├── lambda-receiver/          # Slack 이벤트 수신 Lambda
+│   ├── lambda_receiver.py
+│   ├── iam_policy.json
+│   ├── deploy.sh
+│   └── README.md
+│
+├── lambda-bridge/            # SQS → AgentCore 브릿지 Lambda
+│   ├── lambda_bridge.py
+│   ├── iam_policy.json
+│   ├── requirements.txt
+│   ├── deploy.sh
+│   └── README.md
+│
+├── agentcore/                # AgentCore Runtime 애플리케이션
+│   ├── agentcore_worker_http.py
+│   ├── requirements.txt
+│   ├── deploy.sh
+│   └── README.md
+│
+└── README.md                 # 이 파일
+```
 
-## 🚀 주요 기능
+## 배포 순서
 
-- **Strands Agent**: 자동 도구 선택 및 실행
-- **Knowledge Base Tool**: HR 문서 검색 (IUK5AROV3D)
-- **Calculator Tool**: 정확한 수학 계산
-- **AgentCore Runtime**: AWS 관리형 인프라, 자동 스케일링, Observability
+### 1. AgentCore Runtime 배포
 
-## 📦 빠른 시작
+AgentCore CLI를 사용하여 코드를 직접 배포합니다 (Docker 불필요).
 
-### 1. SQS 생성
 ```bash
-python3 create_sqs_queue.py
+cd agentcore
+bash deploy.sh
 ```
+
+입력 정보:
+- Agent Name (기본값: hr_assistant_agent)
+  - 주의: 하이픈(-) 사용 불가, 언더스코어(_)만 가능
+- AWS Region (기본값: us-east-1)
+- Python Runtime (기본값: PYTHON_3_13)
+- Knowledge Base ID (선택사항)
+- KB Region (기본값: us-east-1)
+
+배포 완료 후 Agent ARN을 기록해두세요:
+```bash
+agentcore status --agent hr_assistant_agent --verbose | grep agent_arn
+```
+
+자세한 내용은 [AgentCore README](agentcore/README.md)를 참조하세요.
 
 ### 2. Lambda Receiver 배포
+
+Slack 이벤트를 수신하고 SQS로 전달하는 Lambda를 배포합니다.
+
 ```bash
-bash create_lambda_receiver.sh
+cd lambda-receiver
+bash deploy.sh
 ```
 
-### 3. AgentCore Runtime 배포
+입력 정보:
+- AWS Region (예: ap-northeast-2)
+
+배포 완료 후:
+- SQS Queue URL 기록
+- API Gateway Endpoint를 Slack App 설정에 입력
+
+자세한 내용은 [Lambda Receiver README](lambda-receiver/README.md)를 참조하세요.
+
+### 3. Lambda Bridge 배포
+
+SQS 메시지를 받아 AgentCore Runtime을 호출하는 Lambda를 배포합니다.
+
 ```bash
-bash deploy_agentcore.sh
+cd lambda-bridge
+bash deploy.sh
 ```
 
-이 스크립트는 다음을 자동으로 수행합니다:
-- ✅ 의존성 확인/생성
-- ✅ ECR 리포지토리 생성
-- ✅ Docker 이미지 빌드 (ARM64)
-- ✅ ECR 푸시
-- ✅ AgentCore Runtime 생성 또는 업데이트
-- ✅ 자동 테스트
+입력 정보:
+- AWS Region (예: ap-northeast-2)
+- Slack Bot Token (xoxb-로 시작)
+- AgentCore Runtime ARN (1단계에서 기록)
+  ```bash
+  agentcore status --agent hr_assistant_agent --verbose | grep agent_arn
+  ```
+- AgentCore Region (예: us-east-1)
+- SQS Queue ARN (2단계에서 기록)
 
-### 4. Lambda Bridge 배포
+자세한 내용은 [Lambda Bridge README](lambda-bridge/README.md)를 참조하세요.
+
+## Slack App 설정
+
+1. [Slack API](https://api.slack.com/apps)에서 앱 생성
+2. **OAuth & Permissions**에서 Bot Token Scopes 추가:
+   - `channels:history`
+   - `chat:write`
+   - `groups:history`
+   - `im:history`
+3. **Event Subscriptions** 활성화:
+   - Request URL: Lambda Receiver의 API Endpoint 입력
+   - Subscribe to bot events:
+     - `message.channels`
+     - `message.groups`
+     - `message.im`
+4. 워크스페이스에 앱 설치 및 Bot Token 복사
+
+## 테스트
+
+### AgentCore Runtime 직접 테스트
+
 ```bash
-bash deploy_bridge.sh
-```
-
-### 5. Slack 설정
-1. https://api.slack.com/apps
-2. Event Subscriptions → API Gateway 엔드포인트 입력
-3. Bot Token Scopes: `channels:history`, `chat:write`, `groups:history`, `im:history`
-4. Lambda Bridge 환경 변수에 `SLACK_BOT_TOKEN` 설정
-
-## 📁 파일 구조
-
-```
-├── lambda_receiver.py          # Slack → SQS
-├── lambda_bridge.py            # SQS → AgentCore Runtime → Slack
-├── agentcore_worker_http.py    # Strands Agent (FastAPI)
-├── Dockerfile.agentcore        # ARM64 컨테이너
-├── python/                     # 의존성 (ARM64)
-├── create_sqs_queue.py         # SQS 생성
-├── create_lambda_receiver.sh   # Receiver 배포
-├── deploy_agentcore.sh         # AgentCore 배포 (자동화)
-├── deploy_bridge.sh            # Bridge 배포
-├── create_agentcore.py         # AgentCore Runtime 생성 (단독)
-├── test_agentcore.py           # Python 테스트
-├── test_agentcore.sh           # Bash 테스트
-├── iam_policy_receiver.json    # Receiver IAM 권한
-├── iam_policy_bridge.json      # Bridge IAM 권한
-├── requirements.txt            # Lambda 의존성
-└── requirements_agentcore.txt  # AgentCore 의존성
-```
-
-## 🔧 환경 변수
-
-### Lambda Receiver
-- `SQS_QUEUE_URL`: SQS 대기열 URL
-
-### Lambda Bridge
-- `SLACK_BOT_TOKEN`: Slack Bot Token (xoxb-로 시작)
-- `AGENTCORE_ARN`: AgentCore Runtime ARN
-
-### AgentCore Worker
-- `AWS_REGION`: ap-northeast-2 (Knowledge Base 리전)
-- Knowledge Base ID: `IUK5AROV3D` (코드에 하드코딩)
-
-## 🧪 테스트
-
-### AgentCore Runtime 테스트
-```bash
-# Python 테스트 (여러 케이스)
-python3 test_agentcore.py
-
-# Bash 테스트 (빠른 확인)
-bash test_agentcore.sh
+agentcore invoke '{"prompt": "What is 10 times 5?"}' --agent hr_assistant_agent
 ```
 
 ### Slack에서 테스트
-```
-"What is 10 times 5?"
-"Calculate 100 + 50"
-"What is the square root of 144?"
-```
 
-### 로그 확인
-```bash
-# Lambda Receiver
-aws logs tail /aws/lambda/slack-bot-receiver --follow --region ap-northeast-2
+Slack에서 봇에게 메시지를 보내보세요:
+- "What is 10 times 5?"
+- "Calculate sqrt(144)"
 
-# Lambda Bridge
-aws logs tail /aws/lambda/slack-bot-bridge --follow --region us-east-1
+## 모니터링
 
-# AgentCore Runtime
-aws logs tail /aws/bedrock-agentcore/hr-assistant-agent --follow --region us-east-1
-```
-
-## 🛠️ Strands Agent 도구
-
-### 1. my_calculator
-수학 계산 수행
-- 기본 연산: +, -, *, /
-- 함수: sqrt, sin, cos, tan, log, exp, pow
-- 상수: pi, e
-
-### 2. search_hr_knowledge_base
-HR 문서 Knowledge Base에서 정보 검색
-- Knowledge Base ID: IUK5AROV3D
-- 모델: Claude 3.7 Sonnet (ap-northeast-2)
-- 한국어 프롬프트 템플릿 포함
-
-## 📊 배포된 리소스
-
-### AWS 리소스
-- **SQS**: `slack-bot-queue`
-- **Lambda Receiver**: `slack-bot-receiver` (ap-northeast-2)
-- **Lambda Bridge**: `slack-bot-bridge` (us-east-1)
-- **AgentCore Runtime**: `hr_assistant_agent` (us-east-1)
-- **ECR Repository**: `hr-assistant-agent` (us-east-1)
-- **API Gateway**: `slack-bot-api` (ap-northeast-2)
-
-### IAM Roles
-- `slack-bot-receiver-role`: SQS 쓰기 권한
-- `slack-bot-bridge-role`: SQS 읽기, AgentCore 호출 권한
-- `slack-bot-worker-role`: Bedrock, Knowledge Base 접근 권한
-
-##  업데이트 방법
-
-### AgentCore Worker 코드 수정 후
-```bash
-# 자동 업데이트 (권장)
-bash deploy_agentcore.sh
-
-# 기존 Runtime이 있으면 자동으로 업데이트됩니다
-```
-
-### Lambda Bridge 수정 후
-```bash
-bash deploy_bridge.sh
-```
-
-## 🧹 리소스 정리
+### CloudWatch Logs
 
 ```bash
-# Lambda 함수 삭제
-aws lambda delete-function --function-name slack-bot-receiver --region ap-northeast-2
-aws lambda delete-function --function-name slack-bot-bridge --region us-east-1
+# Lambda Receiver 로그
+aws logs tail /aws/lambda/slack-bot-receiver --follow
 
-# SQS 삭제
-aws sqs delete-queue --queue-url YOUR_QUEUE_URL --region ap-northeast-2
+# Lambda Bridge 로그
+aws logs tail /aws/lambda/slack-bot-bridge --follow
 
-# AgentCore Runtime 삭제
-aws bedrock-agentcore-control delete-agent-runtime \
-  --agent-runtime-arn YOUR_AGENT_ARN \
-  --region us-east-1
-
-# ECR 이미지 삭제
-aws ecr delete-repository --repository-name hr-assistant-agent --force --region us-east-1
+# AgentCore Runtime 로그
+aws logs tail /aws/bedrock-agentcore/hr_assistant_agent --follow --region us-east-1
 ```
 
-## 📖 추가 문서
+### SQS Queue 모니터링
 
-- [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md): 상세 배포 가이드
-- [agentcore_arn.txt](agentcore_arn.txt): 배포된 AgentCore Runtime ARN
+```bash
+aws sqs get-queue-attributes \
+    --queue-url <SQS_QUEUE_URL> \
+    --attribute-names All
+```
 
-## 🎯 다음 단계
+## 업데이트
 
-### Observability 설정 (선택사항)
-1. CloudWatch Transaction Search 활성화
-2. ADOT (OpenTelemetry) 추가
-3. 메트릭 대시보드 생성
+각 서비스를 개별적으로 업데이트할 수 있습니다:
 
-자세한 내용은 [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)의 "Observability Enablement" 섹션 참조
+```bash
+# AgentCore Runtime 업데이트
+cd agentcore && bash deploy.sh
 
-## 💡 팁
+# Lambda Receiver 업데이트
+cd lambda-receiver && bash deploy.sh
 
-- AgentCore Runtime은 자동으로 스케일링됩니다
-- 기존 Runtime이 있으면 `deploy_agentcore.sh`가 자동으로 업데이트합니다
-- ARN은 `agentcore_arn.txt`에 자동 저장됩니다
-- 테스트 시 영어 질문 사용 (AWS CLI ASCII 제한)
-- 한국어는 Slack을 통해 테스트하세요
+# Lambda Bridge 업데이트
+cd lambda-bridge && bash deploy.sh
+```
+
+## 주요 특징
+
+### AgentCore Direct Code Deploy
+
+- Docker 설치 불필요
+- CodeBuild가 클라우드에서 자동 빌드
+- 빠른 배포 및 업데이트
+- ARM64 아키텍처 자동 지원
+
+### 비동기 처리
+
+- SQS를 통한 안정적인 메시지 큐잉
+- Lambda Bridge가 AgentCore 응답을 Slack으로 전송
+- 긴 처리 시간에도 안정적인 동작
+
+### 확장 가능한 구조
+
+- 각 컴포넌트 독립적으로 배포 및 업데이트
+- 여러 Slack 워크스페이스 지원 가능
+- 다양한 Agent 도구 추가 가능
+
+## 문제 해결
+
+각 서비스의 README.md 파일을 참조하세요:
+- [AgentCore README](agentcore/README.md)
+- [Lambda Receiver README](lambda-receiver/README.md)
+- [Lambda Bridge README](lambda-bridge/README.md)
+
+## 라이선스
+
+MIT License

@@ -1,33 +1,36 @@
-# Lambda 배포 임시 파일
-package/
-lambda_bridge.zip
-lambda_receiver.zip
-*.zip
-
-# Python 의존성
-python/
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+env/
+venv/
+ENV/
 build/
+develop-eggs/
 dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
 *.egg-info/
+.installed.cfg
+*.egg
 
-# AWS 배포 결과물
+# AWS
+*.zip
+package/
 agentcore_arn.txt
-trust-policy-*.json
+trust-policy*.json
 
-# BedrockAgentCore 설정
-.bedrock_agentcore/
+# AgentCore
 .bedrock_agentcore.yaml
-
-# 환경 변수 및 민감 정보
-.env
-.env.local
-*.pem
-*.key
 
 # IDE
 .vscode/
@@ -40,5 +43,5 @@ trust-policy-*.json
 .DS_Store
 Thumbs.db
 
-# 로그
+# Logs
 *.log

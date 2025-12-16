@@ -1,0 +1,148 @@
+=== AgentCore Runtime 재배포 시작 ===
+
+Step 0: 기존 Agent 삭제 중...
+✓ 기존 Agent 삭제 완료
+
+Step 1: Agent 설정 중...
+✓ 설정 완료
+
+Step 2: AWS에 배포 중...
+✓ 배포 완료
+
+Step 3: 배포 상태 확인 중...
+{
+  "config": {
+    "name": "hr_assistant_agent",
+    "entrypoint": 
+"/home/ec2-user/AWSDemo/KBFintech/kb-fintech-assistant/agentcore/agentcore_worker_http.py",
+    "region": "us-east-1",
+    "account": "081041735764",
+    "execution_role": 
+"arn:aws:iam::081041735764:role/AmazonBedrockAgentCoreSDKRuntime-us-east-1-8585f11ecb",
+    "ecr_repository": null,
+    "agent_id": "hr_assistant_agent-S0kEyT7XJN",
+    "agent_arn": 
+"arn:aws:bedrock-agentcore:us-east-1:081041735764:runtime/hr_assistant_agent-S0kEyT7XJN",
+    "network_mode": "PUBLIC",
+    "network_subnets": null,
+    "network_security_groups": null,
+    "network_vpc_id": null,
+    "memory_id": "hr_assistant_agent_mem-WVPFO0GrGv",
+    "memory_status": "ACTIVE",
+    "memory_type": "STM only",
+    "memory_enabled": true,
+    "memory_strategies": null,
+    "memory_details": {
+      "id": "hr_assistant_agent_mem-WVPFO0GrGv",
+      "name": "hr_assistant_agent_mem",
+      "status": "ACTIVE",
+      "description": "Memory for agent hr_assistant_agent with STM only",
+      "event_expiry_days": 30,
+      "created_at": "2025-12-16 02:20:48.045000+00:00",
+      "updated_at": "2025-12-16 02:20:48.164000+00:00",
+      "strategies": []
+    },
+    "idle_timeout": null,
+    "max_lifetime": null
+  },
+  "agent": {
+    "ResponseMetadata": {
+      "RequestId": "cd4d19b4-083c-43f1-b6ce-d2493f984da8",
+      "HTTPStatusCode": 200,
+      "HTTPHeaders": {
+        "date": "Tue, 16 Dec 2025 03:06:34 GMT",
+        "content-type": "application/json",
+        "content-length": "1185",
+        "connection": "keep-alive",
+        "x-amzn-requestid": "cd4d19b4-083c-43f1-b6ce-d2493f984da8",
+        "x-amzn-remapped-x-amzn-requestid": "5a179598-b9db-4c7b-b2ce-b65f862e1e50",
+        "x-amzn-remapped-content-length": "1185",
+        "x-amzn-remapped-connection": "keep-alive",
+        "x-amz-apigw-id": "VqTtQH25oAMELrA=",
+        "x-amzn-trace-id": "Root=1-6940ccba-17d83a6e0d86dafd3c58dd15",
+        "x-amzn-remapped-date": "Tue, 16 Dec 2025 03:06:34 GMT"
+      },
+      "RetryAttempts": 0
+    },
+    "agentRuntimeArn": 
+"arn:aws:bedrock-agentcore:us-east-1:081041735764:runtime/hr_assistant_agent-S0kEyT7XJN",
+    "agentRuntimeName": "hr_assistant_agent",
+    "agentRuntimeId": "hr_assistant_agent-S0kEyT7XJN",
+    "agentRuntimeVersion": "1",
+    "createdAt": "2025-12-16 03:06:20.222399+00:00",
+    "lastUpdatedAt": "2025-12-16 03:06:30.325786+00:00",
+    "roleArn": 
+"arn:aws:iam::081041735764:role/AmazonBedrockAgentCoreSDKRuntime-us-east-1-8585f11ecb",
+    "networkConfiguration": {
+      "networkMode": "PUBLIC"
+    },
+    "status": "READY",
+    "lifecycleConfiguration": {
+      "idleRuntimeSessionTimeout": 900,
+      "maxLifetime": 28800
+    },
+    "workloadIdentityDetails": {
+      "workloadIdentityArn": 
+"arn:aws:bedrock-agentcore:us-east-1:081041735764:workload-identity-directory/default/workload-ident
+ity/hr_assistant_agent-S0kEyT7XJN"
+    },
+    "agentRuntimeArtifact": {
+      "codeConfiguration": {
+        "code": {
+          "s3": {
+            "bucket": "bedrock-agentcore-codebuild-sources-081041735764-us-east-1",
+            "prefix": "hr_assistant_agent/deployment.zip"
+          }
+        },
+        "runtime": "PYTHON_3_13",
+        "entryPoint": [
+          "agentcore_worker_http.py"
+        ]
+      }
+    },
+    "protocolConfiguration": {
+      "serverProtocol": "HTTP"
+    },
+    "environmentVariables": {
+      "BEDROCK_AGENTCORE_MEMORY_ID": "hr_assistant_agent_mem-WVPFO0GrGv",
+      "BEDROCK_AGENTCORE_MEMORY_NAME": "hr_assistant_agent_mem"
+    }
+  },
+  "endpoint": {
+    "ResponseMetadata": {
+      "RequestId": "c89989d0-05c4-41d5-8e39-99ff5af23e66",
+      "HTTPStatusCode": 200,
+      "HTTPHeaders": {
+        "date": "Tue, 16 Dec 2025 03:06:35 GMT",
+        "content-type": "application/json",
+        "content-length": "409",
+        "connection": "keep-alive",
+        "x-amzn-requestid": "c89989d0-05c4-41d5-8e39-99ff5af23e66",
+        "x-amzn-remapped-x-amzn-requestid": "f14ccebe-cfd3-4bac-945e-ba0492f1d178",
+        "x-amzn-remapped-content-length": "409",
+        "x-amzn-remapped-connection": "keep-alive",
+        "x-amz-apigw-id": "VqTtTFb0IAMEEXA=",
+        "x-amzn-trace-id": "Root=1-6940ccbb-3440f42c06f6b2c7498f7bb8",
+        "x-amzn-remapped-date": "Tue, 16 Dec 2025 03:06:35 GMT"
+      },
+      "RetryAttempts": 0
+    },
+    "liveVersion": "1",
+    "agentRuntimeEndpointArn": 
+"arn:aws:bedrock-agentcore:us-east-1:081041735764:runtime/hr_assistant_agent-S0kEyT7XJN/runtime-endp
+oint/DEFAULT",
+    "agentRuntimeArn": 
+"arn:aws:bedrock-agentcore:us-east-1:081041735764:runtime/hr_assistant_agent-S0kEyT7XJN",
+    "status": "READY",
+    "createdAt": "2025-12-16 03:06:20.493110+00:00",
+    "lastUpdatedAt": "2025-12-16 03:06:30.325822+00:00",
+    "name": "DEFAULT",
+    "id": "DEFAULT"
+  }
+}
+
+
+=== 재배포 완료! ===
+
+테스트 명령어:
+agentcore invoke '{"prompt": "What is 10 times 5?"}' --agent hr_assistant_agent
