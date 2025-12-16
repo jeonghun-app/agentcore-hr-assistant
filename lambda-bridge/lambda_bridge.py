@@ -57,8 +57,13 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> None:
 
 def handle_message(event_data: Dict[str, Any]) -> None:
     """Slack 메시지를 처리하고 AgentCore Runtime으로 전달합니다."""
+    # 봇 메시지, 빈 메시지, 메시지 편집/삭제 이벤트 무시
     if event_data.get('bot_id') or not event_data.get('text', '').strip():
         logger.debug("Skipping bot message or empty message")
+        return
+    
+    if event_data.get('subtype') in ['message_changed', 'message_deleted']:
+        logger.debug(f"Skipping message subtype: {event_data.get('subtype')}")
         return
     
     user = event_data.get('user')
@@ -67,8 +72,12 @@ def handle_message(event_data: Dict[str, Any]) -> None:
     
     logger.info(f"Processing message from user {user} in channel {channel}: {text[:100]}...")
     
+    # 초기 상태 메시지 전송
+    status_msg = send_slack_message(channel, "🤔 생각 중...")
+    status_ts = status_msg.get('ts') if status_msg else None
+    
     try:
-        payload = json.dumps({"prompt": text}, ensure_ascii=False).encode('utf-8')
+        payload = json.dumps({"prompt": text, "verbose": True}, ensure_ascii=False).encode('utf-8')
         session_id = f"slack-{channel}-{user}-{uuid.uuid4().hex}"
         
         logger.info(f"Invoking AgentCore with session ID: {session_id}")
@@ -93,24 +102,41 @@ def handle_message(event_data: Dict[str, Any]) -> None:
         response_data = json.loads(response_body)
         logger.info(f"AgentCore response: {json.dumps(response_data)[:200]}...")
         
+        # 중간 과정 메시지 구성
+        progress_messages = _extract_progress_messages(response_data)
         answer = _extract_agent_response(response_data)
-        send_slack_message(channel, answer)
+        
+        # 최종 응답 전송 (상태 메시지 업데이트 또는 새 메시지)
+        final_message = ""
+        if progress_messages:
+            final_message = "\n\n".join(progress_messages) + "\n\n---\n\n" + answer
+        else:
+            final_message = answer
+        
+        if status_ts:
+            update_slack_message(channel, status_ts, final_message)
+        else:
+            send_slack_message(channel, final_message)
+        
         _log_metrics(response_data)
         
     except Exception as e:
         logger.error(f"Error processing message: {str(e)}", exc_info=True)
-        error_msg = f"죄송합니다. 오류가 발생했습니다: {str(e)}"
-        send_slack_message(channel, error_msg)
+        error_msg = f"❌ 오류가 발생했습니다: {str(e)}"
+        if status_ts:
+            update_slack_message(channel, status_ts, error_msg)
+        else:
+            send_slack_message(channel, error_msg)
 
 
-def send_slack_message(channel: str, text: str) -> None:
+def send_slack_message(channel: str, text: str) -> Optional[Dict[str, Any]]:
     """Slack 채널에 메시지를 전송합니다."""
     global slack_client
     
     if slack_client is None:
         if not SLACK_BOT_TOKEN:
             logger.error("SLACK_BOT_TOKEN environment variable not configured")
-            return
+            return None
         
         try:
             from slack_sdk import WebClient
@@ -118,7 +144,7 @@ def send_slack_message(channel: str, text: str) -> None:
             logger.info("Slack client initialized successfully")
         except ImportError:
             logger.error("slack_sdk package not available")
-            return
+            return None
     
     try:
         response = slack_client.chat_postMessage(
@@ -128,9 +154,31 @@ def send_slack_message(channel: str, text: str) -> None:
             unfurl_media=False
         )
         logger.info(f"Message sent to channel {channel}: timestamp {response['ts']}")
+        return response
     except Exception as e:
         logger.error(f"Failed to send Slack message: {str(e)}", exc_info=True)
-        raise
+        return None
+
+
+def update_slack_message(channel: str, ts: str, text: str) -> None:
+    """Slack 메시지를 업데이트합니다."""
+    global slack_client
+    
+    if slack_client is None:
+        logger.error("Slack client not initialized")
+        return
+    
+    try:
+        slack_client.chat_update(
+            channel=channel,
+            ts=ts,
+            text=text,
+            unfurl_links=False,
+            unfurl_media=False
+        )
+        logger.info(f"Message updated in channel {channel}: timestamp {ts}")
+    except Exception as e:
+        logger.error(f"Failed to update Slack message: {str(e)}", exc_info=True)
 
 
 def _extract_agent_response(response_data: Dict[str, Any]) -> str:
@@ -159,6 +207,34 @@ def _extract_agent_response(response_data: Dict[str, Any]) -> str:
     else:
         logger.warning(f"Unknown response format: {response_data}")
         return str(response_data)
+
+
+def _extract_progress_messages(response_data: Dict[str, Any]) -> List[str]:
+    """Agent의 중간 실행 과정을 추출합니다."""
+    progress = []
+    
+    # Strands Agent의 실행 로그 확인
+    if 'result' in response_data and isinstance(response_data['result'], dict):
+        result = response_data['result']
+        
+        # Tool calls 확인
+        if 'tool_calls' in result:
+            for tool_call in result['tool_calls']:
+                tool_name = tool_call.get('name', 'unknown')
+                tool_input = tool_call.get('input', {})
+                tool_output = tool_call.get('output', '')
+                
+                progress.append(f"🔧 **도구 사용**: `{tool_name}`")
+                if tool_input:
+                    progress.append(f"   입력: {json.dumps(tool_input, ensure_ascii=False)}")
+                if tool_output:
+                    progress.append(f"   결과: {tool_output[:200]}...")
+        
+        # Thinking process 확인
+        if 'thinking' in result:
+            progress.append(f"💭 **생각**: {result['thinking'][:200]}...")
+    
+    return progress
 
 
 def _log_metrics(response_data: Dict[str, Any]) -> None:
