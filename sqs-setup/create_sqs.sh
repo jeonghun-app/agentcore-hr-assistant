@@ -7,6 +7,16 @@ set -e
 echo "=== SQS Queue Setup for Slack Bot ==="
 echo ""
 
+# AWS Profile 선택
+echo "Available AWS Profiles:"
+aws configure list-profiles
+echo ""
+read -p "Enter AWS Profile to use [default]: " AWS_PROFILE
+AWS_PROFILE=${AWS_PROFILE:-default}
+export AWS_PROFILE
+echo "✓ Using AWS Profile: $AWS_PROFILE"
+echo ""
+
 # 기본값 설정
 DEFAULT_QUEUE_NAME="slack-bot-queue"
 DEFAULT_REGION="ap-northeast-2"
@@ -27,6 +37,8 @@ VISIBILITY_TIMEOUT=${VISIBILITY_TIMEOUT:-$DEFAULT_VISIBILITY_TIMEOUT}
 read -p "Enter Message Retention Period (seconds) [$DEFAULT_MESSAGE_RETENTION]: " MESSAGE_RETENTION
 MESSAGE_RETENTION=${MESSAGE_RETENTION:-$DEFAULT_MESSAGE_RETENTION}
 
+RECEIVE_WAIT_TIME=${DEFAULT_RECEIVE_WAIT_TIME}
+
 echo ""
 echo "=== Configuration ==="
 echo "  Queue Name: $QUEUE_NAME"
@@ -38,6 +50,7 @@ echo ""
 # SQS 대기열 생성
 echo "Creating SQS queue..."
 QUEUE_URL=$(aws sqs create-queue \
+    --profile "$AWS_PROFILE" \
     --queue-name "$QUEUE_NAME" \
     --region "$AWS_REGION" \
     --attributes "{
@@ -54,6 +67,7 @@ if [ $? -ne 0 ]; then
     if echo "$QUEUE_URL" | grep -q "QueueAlreadyExists"; then
         echo "Queue already exists. Getting queue URL..."
         QUEUE_URL=$(aws sqs get-queue-url \
+            --profile "$AWS_PROFILE" \
             --queue-name "$QUEUE_NAME" \
             --region "$AWS_REGION" \
             --query 'QueueUrl' \
@@ -71,6 +85,7 @@ fi
 echo ""
 echo "Getting queue attributes..."
 QUEUE_ARN=$(aws sqs get-queue-attributes \
+    --profile "$AWS_PROFILE" \
     --queue-url "$QUEUE_URL" \
     --attribute-names QueueArn \
     --region "$AWS_REGION" \
@@ -90,6 +105,7 @@ if [[ "$CREATE_DLQ" =~ ^[Yy]$ ]]; then
     echo "Creating Dead Letter Queue: $DLQ_NAME"
     
     DLQ_URL=$(aws sqs create-queue \
+        --profile "$AWS_PROFILE" \
         --queue-name "$DLQ_NAME" \
         --region "$AWS_REGION" \
         --attributes "{
@@ -102,6 +118,7 @@ if [[ "$CREATE_DLQ" =~ ^[Yy]$ ]]; then
         if echo "$DLQ_URL" | grep -q "QueueAlreadyExists"; then
             echo "DLQ already exists. Getting queue URL..."
             DLQ_URL=$(aws sqs get-queue-url \
+                --profile "$AWS_PROFILE" \
                 --queue-name "$DLQ_NAME" \
                 --region "$AWS_REGION" \
                 --query 'QueueUrl' \
@@ -115,6 +132,7 @@ if [[ "$CREATE_DLQ" =~ ^[Yy]$ ]]; then
     if [ -n "$DLQ_URL" ]; then
         # DLQ ARN 가져오기
         DLQ_ARN=$(aws sqs get-queue-attributes \
+            --profile "$AWS_PROFILE" \
             --queue-url "$DLQ_URL" \
             --attribute-names QueueArn \
             --region "$AWS_REGION" \
@@ -124,6 +142,7 @@ if [[ "$CREATE_DLQ" =~ ^[Yy]$ ]]; then
         # Redrive Policy 설정
         echo "Configuring redrive policy..."
         aws sqs set-queue-attributes \
+            --profile "$AWS_PROFILE" \
             --queue-url "$QUEUE_URL" \
             --attributes "{
                 \"RedrivePolicy\": \"{\\\"deadLetterTargetArn\\\":\\\"$DLQ_ARN\\\",\\\"maxReceiveCount\\\":\\\"3\\\"}\"

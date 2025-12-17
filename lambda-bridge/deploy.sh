@@ -21,6 +21,17 @@ set -e
 echo "🚀 Lambda Bridge 배포 시작..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+# AWS Profile 선택
+echo ""
+echo "Available AWS Profiles:"
+aws configure list-profiles
+echo ""
+read -p "Enter AWS Profile to use [default]: " AWS_PROFILE
+AWS_PROFILE=${AWS_PROFILE:-default}
+export AWS_PROFILE
+echo "✓ Using AWS Profile: $AWS_PROFILE"
+echo ""
+
 # 파라미터 입력
 if [ -z "$AWS_REGION" ]; then
     read -p "AWS Region (예: ap-northeast-2): " AWS_REGION
@@ -57,7 +68,15 @@ if [ -z "$FUNCTION_NAME" ]; then
     FUNCTION_NAME="slack-bot-bridge"
 fi
 
-ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null)
+echo ""
+echo "Verifying AWS credentials..."
+ACCOUNT_ID=$(aws sts get-caller-identity --profile "$AWS_PROFILE" --query Account --output text 2>/dev/null)
+if [ $? -ne 0 ] || [ -z "$ACCOUNT_ID" ]; then
+    echo "✗ Error: Failed to get AWS Account ID"
+    echo "Please check your AWS credentials and profile configuration."
+    exit 1
+fi
+echo "✓ AWS Account ID: $ACCOUNT_ID"
 
 echo ""
 echo "📋 배포 설정:"
@@ -88,20 +107,23 @@ cat > trust-policy.json <<EOF
 }
 EOF
 
-if aws iam get-role --role-name $ROLE_NAME 2>/dev/null; then
+if aws iam get-role --profile "$AWS_PROFILE" --role-name $ROLE_NAME 2>/dev/null; then
     echo "✅ IAM 역할이 이미 존재합니다: $ROLE_NAME"
 else
     aws iam create-role \
+        --profile "$AWS_PROFILE" \
         --role-name $ROLE_NAME \
         --assume-role-policy-document file://trust-policy.json
     echo "✅ IAM 역할 생성 완료: $ROLE_NAME"
 fi
 
 aws iam attach-role-policy \
+    --profile "$AWS_PROFILE" \
     --role-name $ROLE_NAME \
     --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole 2>/dev/null || true
 
 aws iam put-role-policy \
+    --profile "$AWS_PROFILE" \
     --role-name $ROLE_NAME \
     --policy-name BridgePolicy \
     --policy-document file://iam_policy.json
@@ -130,6 +152,7 @@ echo "✅ lambda_bridge.zip 생성 완료"
 echo ""
 echo "📦 3단계: Lambda 함수 생성"
 aws lambda create-function \
+    --profile "$AWS_PROFILE" \
     --function-name $FUNCTION_NAME \
     --runtime python3.12 \
     --role $ROLE_ARN \
@@ -149,6 +172,7 @@ echo "Lambda 함수 준비 대기 중... (5초)"
 sleep 5
 
 aws lambda create-event-source-mapping \
+    --profile "$AWS_PROFILE" \
     --function-name $FUNCTION_NAME \
     --event-source-arn $SQS_QUEUE_ARN \
     --batch-size 1 \

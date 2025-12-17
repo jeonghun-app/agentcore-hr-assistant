@@ -7,6 +7,16 @@ set -e
 echo "=== SQS Queue Deletion ==="
 echo ""
 
+# AWS Profile 선택
+echo "Available AWS Profiles:"
+aws configure list-profiles
+echo ""
+read -p "Enter AWS Profile to use [default]: " AWS_PROFILE
+AWS_PROFILE=${AWS_PROFILE:-default}
+export AWS_PROFILE
+echo "✓ Using AWS Profile: $AWS_PROFILE"
+echo ""
+
 # sqs_config.json에서 설정 읽기
 if [ -f "sqs_config.json" ]; then
     echo "Found sqs_config.json"
@@ -46,6 +56,7 @@ fi
 echo ""
 echo "Deleting main queue..."
 aws sqs delete-queue \
+    --profile "$AWS_PROFILE" \
     --queue-url "$QUEUE_URL" \
     --region "$AWS_REGION"
 
@@ -60,6 +71,7 @@ if [ -n "$DLQ_URL" ] && [ "$DLQ_URL" != "null" ]; then
     echo ""
     echo "Deleting Dead Letter Queue..."
     aws sqs delete-queue \
+        --profile "$AWS_PROFILE" \
         --queue-url "$DLQ_URL" \
         --region "$AWS_REGION"
     

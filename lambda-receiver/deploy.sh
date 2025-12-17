@@ -19,6 +19,17 @@ set -e
 echo "🚀 Lambda Receiver 배포 시작..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+# AWS Profile 선택
+echo ""
+echo "Available AWS Profiles:"
+aws configure list-profiles
+echo ""
+read -p "Enter AWS Profile to use [default]: " AWS_PROFILE
+AWS_PROFILE=${AWS_PROFILE:-default}
+export AWS_PROFILE
+echo "✓ Using AWS Profile: $AWS_PROFILE"
+echo ""
+
 # 파라미터 입력
 if [ -z "$AWS_REGION" ]; then
     read -p "AWS Region (예: ap-northeast-2): " AWS_REGION
@@ -32,7 +43,15 @@ if [ -z "$FUNCTION_NAME" ]; then
     FUNCTION_NAME="slack-bot-receiver"
 fi
 
-ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null)
+echo ""
+echo "Verifying AWS credentials..."
+ACCOUNT_ID=$(aws sts get-caller-identity --profile "$AWS_PROFILE" --query Account --output text 2>/dev/null)
+if [ $? -ne 0 ] || [ -z "$ACCOUNT_ID" ]; then
+    echo "✗ Error: Failed to get AWS Account ID"
+    echo "Please check your AWS credentials and profile configuration."
+    exit 1
+fi
+echo "✓ AWS Account ID: $ACCOUNT_ID"
 
 echo ""
 echo "📋 배포 설정:"
@@ -61,20 +80,23 @@ cat > trust-policy.json <<EOF
 }
 EOF
 
-if aws iam get-role --role-name $ROLE_NAME 2>/dev/null; then
+if aws iam get-role --profile "$AWS_PROFILE" --role-name $ROLE_NAME 2>/dev/null; then
     echo "✅ IAM 역할이 이미 존재합니다: $ROLE_NAME"
 else
     aws iam create-role \
+        --profile "$AWS_PROFILE" \
         --role-name $ROLE_NAME \
         --assume-role-policy-document file://trust-policy.json
     echo "✅ IAM 역할 생성 완료: $ROLE_NAME"
 fi
 
 aws iam attach-role-policy \
+    --profile "$AWS_PROFILE" \
     --role-name $ROLE_NAME \
     --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole 2>/dev/null || true
 
 aws iam put-role-policy \
+    --profile "$AWS_PROFILE" \
     --role-name $ROLE_NAME \
     --policy-name SQSSendMessagePolicy \
     --policy-document file://iam_policy.json
@@ -99,6 +121,7 @@ echo "  ✅ lambda_receiver.zip 생성 완료"
 echo ""
 echo "📦 3단계: Lambda 함수 생성"
 aws lambda create-function \
+    --profile "$AWS_PROFILE" \
     --function-name $FUNCTION_NAME \
     --runtime python3.11 \
     --role $ROLE_ARN \
@@ -106,12 +129,12 @@ aws lambda create-function \
     --zip-file fileb://lambda_receiver.zip \
     --timeout 30 \
     --memory-size 256 \
-    --environment Variables={SQS_QUEUE_URL=$SQS_QUEUE_URL,AWS_REGION=$AWS_REGION} \
+    --environment Variables={SQS_QUEUE_URL=$SQS_QUEUE_URL,SQS_REGION=$AWS_REGION} \
     --region $AWS_REGION
 
 echo "✅ Lambda 함수 생성 완료"
 
-FUNCTION_ARN=$(aws lambda get-function --function-name $FUNCTION_NAME --region $AWS_REGION --query 'Configuration.FunctionArn' --output text)
+FUNCTION_ARN=$(aws lambda get-function --profile "$AWS_PROFILE" --function-name $FUNCTION_NAME --region $AWS_REGION --query 'Configuration.FunctionArn' --output text)
 
 # API Gateway 생성
 echo ""
@@ -119,6 +142,7 @@ echo "📦 4단계: API Gateway 생성"
 API_NAME="${FUNCTION_NAME}-api"
 
 API_RESPONSE=$(aws apigatewayv2 create-api \
+    --profile "$AWS_PROFILE" \
     --name $API_NAME \
     --protocol-type HTTP \
     --target $FUNCTION_ARN \
@@ -134,6 +158,7 @@ echo "  API Endpoint: $API_ENDPOINT"
 echo ""
 echo "📦 5단계: Lambda 호출 권한 추가"
 aws lambda add-permission \
+    --profile "$AWS_PROFILE" \
     --function-name $FUNCTION_NAME \
     --statement-id apigateway-invoke \
     --action lambda:InvokeFunction \

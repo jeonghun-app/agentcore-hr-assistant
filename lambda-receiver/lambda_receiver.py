@@ -27,7 +27,7 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 # Initialize AWS clients
-sqs_client = boto3.client('sqs', region_name=os.environ.get('AWS_REGION', 'ap-northeast-2'))
+sqs_client = boto3.client('sqs', region_name=os.environ.get('SQS_REGION', 'ap-northeast-2'))
 SQS_QUEUE_URL = os.environ.get('SQS_QUEUE_URL')
 
 
@@ -74,6 +74,16 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             if event_data.get('bot_id'):
                 logger.info("Ignoring bot message to prevent recursion")
                 return _create_response(200, {'ok': True})
+            
+            # 메시지 편집/삭제 이벤트 무시
+            if event_data.get('subtype') in ['message_changed', 'message_deleted']:
+                logger.info(f"Ignoring message subtype: {event_data.get('subtype')}")
+                return _create_response(200, {'ok': True})
+            
+            # 스레드 응답 무시 (선택사항 - 스레드에도 응답하려면 이 부분 제거)
+            # if event_data.get('thread_ts'):
+            #     logger.info("Ignoring thread message")
+            #     return _create_response(200, {'ok': True})
             
             # SQS로 메시지 전송 (비동기 처리)
             if SQS_QUEUE_URL:

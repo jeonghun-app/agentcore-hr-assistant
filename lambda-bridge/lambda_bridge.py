@@ -102,16 +102,9 @@ def handle_message(event_data: Dict[str, Any]) -> None:
         response_data = json.loads(response_body)
         logger.info(f"AgentCore response: {json.dumps(response_data)[:200]}...")
         
-        # 중간 과정 메시지 구성
-        progress_messages = _extract_progress_messages(response_data)
+        # 최종 응답 추출
         answer = _extract_agent_response(response_data)
-        
-        # 최종 응답 전송 (상태 메시지 업데이트 또는 새 메시지)
-        final_message = ""
-        if progress_messages:
-            final_message = "\n\n".join(progress_messages) + "\n\n---\n\n" + answer
-        else:
-            final_message = answer
+        final_message = answer
         
         if status_ts:
             update_slack_message(channel, status_ts, final_message)
@@ -186,55 +179,51 @@ def _extract_agent_response(response_data: Dict[str, Any]) -> str:
     # 다양한 응답 형식 처리
     if 'result' in response_data:
         result = response_data['result']
+        
+        # result가 dict인 경우
         if isinstance(result, dict):
-            # Strands Agent 응답 형식
-            if 'message' in result:
-                return result['message']
-            elif 'content' in result and isinstance(result['content'], list):
+            # OpenAI 형식: {"role": "assistant", "content": [...]}
+            if 'content' in result and isinstance(result['content'], list):
+                # content 리스트에서 text만 추출
+                text_parts = []
+                for block in result['content']:
+                    if isinstance(block, dict):
+                        # reasoningContent는 건너뛰고 text만 추출
+                        if 'text' in block:
+                            text_parts.append(block['text'])
+                        # reasoningContent 건너뛰기
+                        elif 'reasoningContent' in block:
+                            continue
+                
+                if text_parts:
+                    return ''.join(text_parts)
+                
+                # text가 없으면 첫 번째 블록 사용
                 return result['content'][0].get('text', str(result))
+            
+            # Strands Agent 형식
+            elif 'message' in result:
+                return result['message']
             else:
                 return str(result)
+        
+        # result가 문자열인 경우
         else:
             return str(result)
+    
     elif 'output' in response_data:
         output = response_data['output']
         if isinstance(output, dict):
             return output.get('message', str(output))
         else:
             return str(output)
+    
     elif 'message' in response_data:
         return response_data['message']
+    
     else:
         logger.warning(f"Unknown response format: {response_data}")
         return str(response_data)
-
-
-def _extract_progress_messages(response_data: Dict[str, Any]) -> List[str]:
-    """Agent의 중간 실행 과정을 추출합니다."""
-    progress = []
-    
-    # Strands Agent의 실행 로그 확인
-    if 'result' in response_data and isinstance(response_data['result'], dict):
-        result = response_data['result']
-        
-        # Tool calls 확인
-        if 'tool_calls' in result:
-            for tool_call in result['tool_calls']:
-                tool_name = tool_call.get('name', 'unknown')
-                tool_input = tool_call.get('input', {})
-                tool_output = tool_call.get('output', '')
-                
-                progress.append(f"🔧 **도구 사용**: `{tool_name}`")
-                if tool_input:
-                    progress.append(f"   입력: {json.dumps(tool_input, ensure_ascii=False)}")
-                if tool_output:
-                    progress.append(f"   결과: {tool_output[:200]}...")
-        
-        # Thinking process 확인
-        if 'thinking' in result:
-            progress.append(f"💭 **생각**: {result['thinking'][:200]}...")
-    
-    return progress
 
 
 def _log_metrics(response_data: Dict[str, Any]) -> None:

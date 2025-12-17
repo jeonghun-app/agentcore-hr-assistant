@@ -10,6 +10,46 @@ echo "=== AgentCore HR Assistant Agent Deploy ==="
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# AWS Profile 선택
+echo ""
+echo "Available AWS Profiles:"
+aws configure list-profiles 2>/dev/null || echo "  (no profiles found)"
+echo ""
+read -p "Enter AWS Profile to use [default]: " AWS_PROFILE
+AWS_PROFILE=${AWS_PROFILE:-default}
+echo "✓ Using AWS Profile: $AWS_PROFILE"
+echo ""
+
+# AWS 계정 정보 확인
+echo "Verifying AWS credentials..."
+
+# Profile이 default가 아닌 경우에만 --profile 옵션 사용
+if [ "$AWS_PROFILE" = "default" ]; then
+    AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>&1)
+    EXIT_CODE=$?
+else
+    AWS_ACCOUNT_ID=$(aws sts get-caller-identity --profile "$AWS_PROFILE" --query Account --output text 2>&1)
+    EXIT_CODE=$?
+fi
+
+if [ $EXIT_CODE -eq 0 ] && [ -n "$AWS_ACCOUNT_ID" ]; then
+    echo "✓ AWS Account ID: $AWS_ACCOUNT_ID"
+    
+    # User/Role 정보 가져오기
+    if [ "$AWS_PROFILE" = "default" ]; then
+        AWS_USER=$(aws sts get-caller-identity --query Arn --output text 2>&1)
+    else
+        AWS_USER=$(aws sts get-caller-identity --profile "$AWS_PROFILE" --query Arn --output text 2>&1)
+    fi
+    echo "✓ AWS User/Role: $AWS_USER"
+else
+    echo "✗ Error: Failed to verify AWS credentials"
+    echo "Error details: $AWS_ACCOUNT_ID"
+    echo "Please check your AWS configuration and try again."
+    exit 1
+fi
+echo ""
+
 # 필수 파일 확인
 if [ ! -f "agent.py" ]; then
     echo "Error: agent.py not found"
@@ -29,9 +69,9 @@ fi
 
 # 기본값 설정
 AGENT_NAME="hr_assistant_agent"
-AWS_REGION="us-east-1"
+AWS_REGION="us-east-1"  # AgentCore 배포 리전
 PYTHON_RUNTIME="PYTHON_3_12"
-KB_REGION="us-east-1"
+KB_REGION="ap-northeast-2"  # Knowledge Base 리전
 
 # 기존 설정 확인
 if [ -f ".bedrock_agentcore.yaml" ]; then
@@ -87,11 +127,34 @@ if [ "$CONFIGURE_NEEDED" = true ]; then
     echo "✓ 설정 완료"
 fi
 
-# Model ID 입력
+# Model ID 및 Region 입력
 echo ""
-DEFAULT_MODEL_ID="arn:aws:bedrock:us-east-1:0000000000:inference-profile/global.anthropic.claude-sonnet-4-20250514-v1:0"
-read -p "Enter Model ID or ARN [$DEFAULT_MODEL_ID]: " MODEL_ID
+echo "Model Configuration:"
+echo "  1. Cross-region inference profile (권장): us.anthropic.claude-sonnet-4-20250514-v1:0"
+echo "  2. Single-region model (서울): anthropic.claude-3-7-sonnet-20250219-v1:0"
+echo "  3. Llama model: meta.llama3-3-70b-instruct-v1:0"
+echo ""
+DEFAULT_MODEL_ID="us.anthropic.claude-sonnet-4-20250514-v1:0"
+read -p "Enter Model ID [$DEFAULT_MODEL_ID]: " MODEL_ID
 MODEL_ID=${MODEL_ID:-$DEFAULT_MODEL_ID}
+
+# Model Region 입력
+DEFAULT_MODEL_REGION="us-east-1"
+# 서울 단일 리전 모델인 경우 ap-northeast-2 제안
+if [[ "$MODEL_ID" == anthropic.* ]] && [[ "$MODEL_ID" != us.* ]] && [[ "$MODEL_ID" != arn:* ]]; then
+    DEFAULT_MODEL_REGION="ap-northeast-2"
+fi
+read -p "Enter Model Region [$DEFAULT_MODEL_REGION]: " MODEL_REGION
+MODEL_REGION=${MODEL_REGION:-$DEFAULT_MODEL_REGION}
+
+# Max Iterations 입력
+DEFAULT_MAX_ITERATIONS="5"
+# Llama 모델인 경우 3 제안
+if [[ "$MODEL_ID" == *llama* ]]; then
+    DEFAULT_MAX_ITERATIONS="3"
+fi
+read -p "Enter Max Iterations (tool use limit) [$DEFAULT_MAX_ITERATIONS]: " MAX_ITERATIONS
+MAX_ITERATIONS=${MAX_ITERATIONS:-$DEFAULT_MAX_ITERATIONS}
 
 # Knowledge Base ID 입력
 echo ""
@@ -112,12 +175,14 @@ echo "  Agent Name: $AGENT_NAME"
 echo "  Region: $AWS_REGION"
 echo "  Runtime: $PYTHON_RUNTIME"
 echo "  Model ID: $MODEL_ID"
+echo "  Model Region: $MODEL_REGION"
+echo "  Max Iterations: $MAX_ITERATIONS"
 echo "  Knowledge Base ID: ${KNOWLEDGE_BASE_ID:-Not set}"
 echo "  KB Region: $KB_REGION"
 echo ""
 
 # 환경 변수 설정
-ENV_VARS="--env MODEL_ID=$MODEL_ID"
+ENV_VARS="--env MODEL_ID=$MODEL_ID --env MODEL_REGION=$MODEL_REGION --env MAX_ITERATIONS=$MAX_ITERATIONS"
 if [ -n "$KNOWLEDGE_BASE_ID" ]; then
     ENV_VARS="$ENV_VARS --env KNOWLEDGE_BASE_ID=$KNOWLEDGE_BASE_ID --env KB_REGION=$KB_REGION"
 fi
@@ -142,16 +207,30 @@ if [ -n "$KNOWLEDGE_BASE_ID" ] && [[ "$ADD_KB_PERMS" =~ ^[Yy]$ ]]; then
             
             # 현재 정책 가져오기
             echo "Fetching current policy..."
-            aws iam get-role-policy \
-                --role-name "$ROLE_NAME" \
-                --policy-name "$POLICY_NAME" \
-                --region "$AWS_REGION" \
-                --query 'PolicyDocument' \
-                --output json > /tmp/current_policy.json 2>/dev/null
             
-            if [ $? -ne 0 ]; then
+            # Profile 처리
+            if [ "$AWS_PROFILE" = "default" ]; then
+                aws iam get-role-policy \
+                    --role-name "$ROLE_NAME" \
+                    --policy-name "$POLICY_NAME" \
+                    --query 'PolicyDocument' \
+                    --output json > /tmp/current_policy.json 2>&1
+                GET_POLICY_EXIT=$?
+            else
+                aws iam get-role-policy \
+                    --profile "$AWS_PROFILE" \
+                    --role-name "$ROLE_NAME" \
+                    --policy-name "$POLICY_NAME" \
+                    --query 'PolicyDocument' \
+                    --output json > /tmp/current_policy.json 2>&1
+                GET_POLICY_EXIT=$?
+            fi
+            
+            if [ $GET_POLICY_EXIT -ne 0 ]; then
                 echo "Policy not found, creating new one..."
                 echo '{"Version": "2012-10-17", "Statement": []}' > /tmp/current_policy.json
+            else
+                echo "✓ Current policy fetched successfully"
             fi
             
             # Knowledge Base 권한 추가
@@ -180,13 +259,24 @@ if [ -n "$KNOWLEDGE_BASE_ID" ] && [[ "$ADD_KB_PERMS" =~ ^[Yy]$ ]]; then
             if [ $? -eq 0 ]; then
                 # IAM 정책 업데이트
                 echo "Updating IAM role policy..."
-                aws iam put-role-policy \
-                    --role-name "$ROLE_NAME" \
-                    --policy-name "$POLICY_NAME" \
-                    --policy-document file:///tmp/updated_policy.json \
-                    --region "$AWS_REGION"
                 
-                if [ $? -eq 0 ]; then
+                # Profile 처리
+                if [ "$AWS_PROFILE" = "default" ]; then
+                    aws iam put-role-policy \
+                        --role-name "$ROLE_NAME" \
+                        --policy-name "$POLICY_NAME" \
+                        --policy-document file:///tmp/updated_policy.json
+                    PUT_POLICY_EXIT=$?
+                else
+                    aws iam put-role-policy \
+                        --profile "$AWS_PROFILE" \
+                        --role-name "$ROLE_NAME" \
+                        --policy-name "$POLICY_NAME" \
+                        --policy-document file:///tmp/updated_policy.json
+                    PUT_POLICY_EXIT=$?
+                fi
+                
+                if [ $PUT_POLICY_EXIT -eq 0 ]; then
                     echo "✓ Knowledge Base permissions added successfully"
                 else
                     echo "⚠ Warning: Failed to update IAM policy. You may need to add permissions manually."
